@@ -821,7 +821,7 @@ public class SettingsActivity extends Activity {
 
         // MARK: - Home Settings and Remote Buttons
 
-        private static final String[] UNITS = {"auto", "C", "F"}, THEMES = {"auto", "light", "dark"},
+        private static final String[] UNITS = {"auto", "C", "F"}, THEMES = {"auto", "light", "dark", "luxury"},
                 CLOCKS = {"auto", "24", "12"};
         /** Home Settings: language, temperature, theme, clock, my photos, sounds, top of the screen, picks, Continue
          *  Watching's apps, watch from the screensaver, Android apps, weather, city, forecast, now playing, quotes, one row
@@ -894,10 +894,12 @@ public class SettingsActivity extends Activity {
             String unit = Prefs.temperature();
             v[1] = unit.equals("C") ? "°C" : unit.equals("F") ? "°F" : Ui.tr("unit|Automatic");
             String theme = Prefs.theme();
-            v[2] = theme.equals("light") ? Ui.tr("Light") : theme.equals("dark") ? Ui.tr("Dark") : Ui.tr("Automatic");
+            v[2] = theme.equals("light") ? Ui.tr("Light") : theme.equals("dark") ? Ui.tr("Dark")
+                    : theme.equals("luxury") ? Ui.tr("Luxury") : Ui.tr("Automatic");
             int photos = Photos.files(getContext()).size();
             v[PHOTOS_ROW] = photos == 0 ? Ui.tr("photos|None")
-                    : Prefs.photos() ? Ui.plural("plural|one:{n} photo|other:{n} photos", photos) : Ui.tr("Off");
+                    : Prefs.photos() ? Ui.plural("plural|one:{n} photo|other:{n} photos", photos)
+                    + (Prefs.wallpaper() ? " · " + Ui.tr("Wallpaper") : "") : Ui.tr("Off");
             String clock = Prefs.clockFormat();
             v[CLOCK_ROW] = clock.equals("24") ? Ui.tr("24 hours") : clock.equals("12") ? Ui.tr("12 hours") : Ui.tr("Automatic");
             v[5] = onOff(Prefs.sounds());
@@ -1193,7 +1195,16 @@ public class SettingsActivity extends Activity {
                 }
                 case PHOTOS_ROW:
                     if (Photos.files(getContext()).isEmpty()) return;
-                    Prefs.setPhotos(!Prefs.photos());
+                    // On (screensaver, and the home background without picks) → Wallpaper (also behind the picks) → Off.
+                    if (!Prefs.photos()) {
+                        Prefs.setPhotos(true);
+                        Prefs.setWallpaper(false);
+                    } else if (!Prefs.wallpaper()) {
+                        Prefs.setWallpaper(true);
+                    } else {
+                        Prefs.setWallpaper(false);
+                        Prefs.setPhotos(false);
+                    }
                     return;
                 case CLOCK_ROW: {
                     int at = java.util.Arrays.asList(CLOCKS).indexOf(Prefs.clockFormat());
