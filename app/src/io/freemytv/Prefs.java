@@ -196,7 +196,7 @@ final class Prefs {
     /** "auto" (dark from sunset to sunrise), "light" or "dark". */
     static String theme() {
         String v = sp().getString("theme", Config.THEME.trim());
-        return v.equals("light") || v.equals("dark") ? v : "auto";
+        return v.equals("light") || v.equals("dark") || v.equals("luxury") ? v : "auto";
     }
 
     static void setTheme(String v) { put("theme", v); }
@@ -261,6 +261,13 @@ final class Prefs {
     /** Your photos (Photos, sent from a computer) on the screensaver and behind the home screen, once imported. */
     static boolean photos() { return sp().getBoolean("photos", true); }
     static void setPhotos(boolean on) { put("photos", on); }
+
+    /** Your photo as the wallpaper behind the home screen, also with the picks on (otherwise only without picks). */
+    static boolean wallpaper() { return sp().getBoolean("wallpaper", false); }
+    static void setWallpaper(boolean on) { put("wallpaper", on); }
+
+    /** The Luxury theme: black and gold, with a slow moving light behind everything. */
+    static boolean luxury() { return theme().equals("luxury"); }
 
     static boolean coin(int i) { return sp().getBoolean("coin" + i, true); }
     static void setCoin(int i, boolean on) { put("coin" + i, on); }
