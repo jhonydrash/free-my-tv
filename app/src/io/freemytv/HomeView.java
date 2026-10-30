@@ -94,7 +94,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final long TOAST_MS = 6000, FADE_MS = 800;
     /** Blur radii of the shadow and shadowDeep paints (Shadows needs them to draw the same blur on older TVs). */
     private static final float SHADOW_BLUR = 26, DEEP_BLUR = 30;
-    private static final int SKY = 0, HERO = 1, STATUS = 2, PLATTER = 3, TILES = 4, DRAWER = 5, SHEET = 6, TOAST = 7, MENU = 8;
+    private static final int SKY = 0, HERO = 1, STATUS = 2, PLATTER = 3, TILES = 4, DRAWER = 5, SHEET = 6, TOAST = 7, MENU = 8, AURA = 9;
     private static final int Z_STATUS = 0, Z_HERO = 1, Z_SHELF = 2, Z_DRAWER = 3;
     private static final ExecutorService LOADER = Executors.newSingleThreadExecutor();
     // Light design (the L_ constants): title, tab bar, three recommendation cards and the shelf.
@@ -131,7 +131,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         @Override public void hold(int id) { if (sheetOpen) a11yHold(); else if (canReorder()) startReorder(); else showMenu(); }
     });
     private final RectF a11yRect = new RectF();
-    private final Layer sky, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, toastLayer, menuLayer;
+    private final Layer sky, aura, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, toastLayer, menuLayer;
     private int zone = Z_SHELF;
 
     // Night look (like Apple's "Automatic" appearance): darker from sunset to sunrise, with a 2 s transition.
@@ -257,6 +257,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Spring heroFocus = new Spring(0.28f, 0.85f, 0);
     private final RectF heroButton = new RectF();
     private Backdrop bgFrom, bgTo;     // null = gradient (no photo)
+    private Backdrop ownBackdrop;      // your photo while it is pinned as the wallpaper (picks do not replace it)
     private final int[] frostMix = new int[Backdrop.FW * Backdrop.FH];
 
     // Bottom drawer
@@ -372,6 +373,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             shadows.dither = dark() > 0.5f;
             switch (kind) {
                 case SKY: drawSky(c); break;
+                case AURA: drawAura(c); break;
                 case HERO: drawLightTop(c); break;
                 case STATUS: drawLightButtons(c); break;
                 case PLATTER: drawPlatter(c); break;
@@ -437,6 +439,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         setFocusable(true);
         sky = new Layer(a, SKY);
+        aura = new Layer(a, AURA);
         heroLayer = new Layer(a, HERO);
         status = new Layer(a, STATUS);
         platter = new Layer(a, PLATTER);
@@ -450,11 +453,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // frame cost more than drawing straight to the screen (measured: focus on the picks 33 → 12 ms a frame, the
         // drawer 19 → 17 ms).
         for (View v : new View[] {heroLayer, status, platter, tiles, drawerLayer, sheetLayer}) v.setLayerType(Ui.LEGACY ? LAYER_TYPE_NONE : LAYER_TYPE_HARDWARE, null);
-        for (View v : new View[] {sky, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, menuLayer, toastLayer}) {
+        for (View v : new View[] {sky, aura, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, menuLayer, toastLayer}) {
             v.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);   // TalkBack reads the items (Spoken)
             addView(v);
         }
         setContentDescription("Free My TV");
+        aura.setVisibility(INVISIBLE);
+        applyLook();
         drawerLayer.setVisibility(INVISIBLE);
         menuLayer.setVisibility(INVISIBLE);
         for (int i = 0; i < topFocus.length; i++) {
@@ -491,6 +496,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     void resume() {
         if (running) return;
         running = true;
+        applyLook();
         checkNight(false);
         boolean h24 = Prefs.clock24();
         if (h24 != clock24) {   // 12/24 hours changed in the TV's settings: the clock and the drawer's times again
@@ -637,6 +643,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         int width = MeasureSpec.getSize(widthSpec), height = MeasureSpec.getSize(heightSpec);
         float kk = width / 1920f;
         measure(sky, width, height);
+        measure(aura, width, height);
         measure(heroLayer, width, Math.round(790 * kk));
         measure(status, Math.round(1160 * kk), Math.round(240 * kk));
         // Sized to what they draw (the glass and its shadow; the grown tiles and their shadows): smaller layers are
@@ -658,6 +665,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         int width = r - l, height = b - t;
         float kk = width / 1920f;
         sky.layout(0, 0, width, height);
+        aura.layout(0, 0, width, height);
         place(heroLayer, 0, 0);
         place(status, width - status.getMeasuredWidth(), 0);
         place(platter, 0, Math.round(750 * kk));
@@ -808,6 +816,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean heroFading = tickHeroFade(up);
         boolean bgFading = tickBackgroundFade(up);
         boolean nightMoving = tickNight(up);
+        boolean auraMoving = luxury && !Ui.LEGACY && aura.getVisibility() == VISIBLE;
+        if (auraMoving) aura.invalidate();   // the Luxury light: only this layer is redrawn
         boolean menuMoving = menu.step(dt) | menuPick.step(dt);
         if (menuMoving || nightMoving && menuOpen) menuLayer.invalidate();
         else if (!menuOpen && menuLayer.getVisibility() == VISIBLE) menuLayer.setVisibility(INVISIBLE);
@@ -838,7 +848,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
         // Busy: something is moving, or the sheet or the drawer is open.
         boolean busy = tilesMoving || statusMoving || heroMoving || drawerItemsMoving || gridMoving || drawerMoving
-                || menuMoving || sheetMoving || toastFading || heroFading || bgFading || nightMoving || tintMoving || sheetOpen
+                || menuMoving || sheetMoving || toastFading || heroFading || bgFading || nightMoving || tintMoving || auraMoving || sheetOpen
                 || sheet.value > 0.001f || drawerOpen || drawer.value > 0.001f || toast != null || !toasts.isEmpty();
         idle = !busy;
         if (busy) Choreographer.getInstance().postFrameCallback(this);
@@ -1017,6 +1027,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** Swaps the background with a cross-fade (from one image to another, from the gradient to an image, or back). */
     private void showBackdrop(Backdrop b) {
         if (b == bgTo) return;
+        if (ownBackdrop != null && b != ownBackdrop) return;   // the wallpaper stays while you browse the picks
         long up = SystemClock.uptimeMillis();
         // In the middle of another swap, start from whichever is more visible.
         if (bgFadeAt == 0 || fadeEase(bgFadeAt, up) >= 0.5f) bgFrom = bgTo;
@@ -3258,6 +3269,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (!cards.isEmpty()) cards = new ArrayList<>();
             boolean own = clockMode() && Photos.on(getContext());
             Backdrop b = own ? Photos.backdrop(getContext(), ownReady) : null;
+            ownBackdrop = null;
             if (b != null || !own) showBackdrop(b);
             heroDirty = true;
             return;
@@ -3278,8 +3290,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             for (int i = 0; i < Math.min(3, other.size()); i++) recs.backdrop(other.get(i));
         }
         // Picks bring their own background; without them (no TMDB key), your photo if there is one.
-        boolean own = !picksOn() && Photos.on(getContext());
+        // Wallpaper (Home Settings → My Photos): your photo stays behind the picks too.
+        boolean pinned = Prefs.wallpaper() && Photos.on(getContext());
+        boolean own = pinned || !picksOn() && Photos.on(getContext());
         Backdrop b = own ? Photos.backdrop(getContext(), ownReady) : cards.isEmpty() ? null : recs.backdrop(cards.get(0));
+        ownBackdrop = pinned ? b : null;
         if (b != null || (cards.isEmpty() && !own)) showBackdrop(b);
         heroDirty = true;
         spoken.focusMoved();    // new picks under the focused card
@@ -3755,7 +3770,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         android.graphics.ColorFilter v = veil(tone(0.32f, 0.42f) * Ui.clamp(drawer.value), blend(0xFFFFFFFF, 0xFF000000, night));
         if (bgTo == null || (fading && bgFrom == null)) {
             if (lightGradient == null) lightGradient = Ui.gradient(h, 0xFFF5F5F7, 0xFFE2E2E7);
-            if (nightGradient == null) nightGradient = BARBIE ? Ui.gradient(h, 0xFF2B0A1F, 0xFF050005) : Ui.gradient(h, 0xFF1C1C1E, 0xFF0B0B0D);
+            if (nightGradient == null) nightGradient = luxury ? Ui.gradient(h, 0xFF18130A, 0xFF030302)
+                    : BARBIE ? Ui.gradient(h, 0xFF2B0A1F, 0xFF050005) : Ui.gradient(h, 0xFF1C1C1E, 0xFF0B0B0D);
             fill.setColorFilter(v);
             fill.setColor(0xFF000000);
             if (continueMode()) {
@@ -3777,7 +3793,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (fading && bgFrom != null) drawLightImage(c, bgFrom, bgTo == null ? 1 - e : 1);
         if (bgTo != null) drawLightImage(c, bgTo, fading ? e : 1);
         imagePaint.setColorFilter(null);
-        if (BARBIE) drawBarbieGlow(c);
+        if (luxury && bgTo != null) {   // a warm, deep veil over the photo: black marble instead of a plain picture
+            fill.setShader(null);
+            fill.setColor(0x70100A02);
+            c.drawRect(screen, fill);
+            fill.setColor(0xFF000000);
+        }
+        if (BARBIE && !luxury) drawBarbieGlow(c);
     }
 
     private android.graphics.RadialGradient barbieGlowA, barbieGlowB;
@@ -3913,7 +3935,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 c.drawRoundRect(cell, rr, rr, fill);
             }
             Paint p = i == tab ? lTabOn : lTab;
-            if (i == tab) lTabOn.setColor(BARBIE ? 0xFFFFFFFF : blend(tone(L_INK, WHITE), L_INK, focus));   // always dark on the white pill
+            if (i == tab) lTabOn.setColor(luxury ? 0xFF1A1305 : BARBIE ? 0xFFFFFFFF : blend(tone(L_INK, WHITE), L_INK, focus));   // always dark on the white pill
             c.drawText(tabs()[i], r.centerX() - p.measureText(tabs()[i]) / 2, r.centerY() + Ui.halfCap(p), p);
         }
         layoutCards();
@@ -4053,7 +4075,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             }
             drawNeonColor(c, cell, rad, NEON_BUTTONS[i % NEON_BUTTONS.length], 0.7f + 0.3f * f, f);
             Symbols.draw(getContext(), c, it.symbol, cell.centerX(), cell.centerY(), 27 * k * s,
-                    BARBIE ? 0xFFFFFFFF : blend(tone(L_INK, 0xEBFFFFFF), L_INK, f));
+                    luxury && f > 0.5f ? 0xFF1A1305 : BARBIE ? 0xFFFFFFFF : blend(tone(L_INK, 0xEBFFFFFF), L_INK, f));
             if (f > 0.01f) {
                 String label = it.label;
                 float half = lTip.measureText(label) / 2;
@@ -4166,15 +4188,132 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return best;
     }
 
+
+    // MARK: - Luxury look (Home Settings → Theme → Luxury)
+
+    private static final int LUX_GOLD = 0xFFE3B341, LUX_CHAMPAGNE = 0xFFFFE7B0, LUX_BRONZE = 0xFFA87A22;
+    private static final int LUX_DUST = 36;
+    private boolean luxury, looked;
+    private final float[] dustX = new float[LUX_DUST], dustY = new float[LUX_DUST], dustSpeed = new float[LUX_DUST],
+            dustSize = new float[LUX_DUST], dustPhase = new float[LUX_DUST];
+    {
+        java.util.Random r = new java.util.Random(20261029L);
+        for (int i = 0; i < LUX_DUST; i++) {
+            dustX[i] = r.nextFloat();
+            dustY[i] = r.nextFloat();
+            dustSpeed[i] = 0.012f + 0.03f * r.nextFloat();       // screens per second, upward
+            dustSize[i] = 1.2f + 2.8f * r.nextFloat();
+            dustPhase[i] = r.nextFloat() * 6.2832f;
+        }
+    }
+    private final Paint auraPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private android.graphics.RadialGradient auraPoolA, auraPoolB, auraVignette;
+    private LinearGradient auraSweep;
+    private int auraW, auraH;
+
+    /** Reads the theme: gold ring, tabs and title, the aura behind everything, and a warm black background. */
+    private void applyLook() {
+        boolean lux = Prefs.luxury();
+        if (looked && lux == luxury) return;
+        looked = true;
+        luxury = lux;
+        NEON_PINK = lux ? LUX_GOLD : 0xFFFF2E93;
+        NEON_CYAN = lux ? LUX_CHAMPAGNE : 0xFFFFC46B;
+        NEON_VIOLET = lux ? LUX_BRONZE : 0xFFE0218A;
+        NEON_BUTTONS[0] = NEON_PINK;
+        NEON_BUTTONS[1] = NEON_CYAN;
+        NEON_BUTTONS[2] = NEON_VIOLET;
+        java.util.Arrays.fill(neonShaders, null);
+        titleShader = null;
+        nightGradient = null;
+        aura.setVisibility(lux ? VISIBLE : INVISIBLE);
+        invalidateAll();
+        aura.invalidate();
+        wake();
+    }
+
+    private void buildAura() {
+        auraW = w;
+        auraH = h;
+        auraPoolA = new android.graphics.RadialGradient(0, 0, w * 0.55f, 0x3CE3B341, 0x00E3B341, Shader.TileMode.CLAMP);
+        auraPoolB = new android.graphics.RadialGradient(0, 0, w * 0.45f, 0x2CB8862B, 0x00B8862B, Shader.TileMode.CLAMP);
+        auraVignette = new android.graphics.RadialGradient(w / 2f, h * 0.45f, Math.max(w, h) * 0.75f,
+                new int[] {0x00000000, 0x00000000, 0xCC000000}, new float[] {0f, 0.45f, 1f}, Shader.TileMode.CLAMP);
+        auraSweep = new LinearGradient(0, 0, w * 0.30f, 0,
+                new int[] {0x00FFE7B0, 0x34FFE7B0, 0x00FFE7B0}, new float[] {0f, 0.5f, 1f}, Shader.TileMode.CLAMP);
+    }
+
+    /**
+     * The Luxury light, behind the cards and the shelf: two slow pools of gold drifting, a soft shine that crosses the
+     * screen every few seconds, gold dust rising and twinkling, and a vignette. Only transforms and cached gradients
+     * (nothing is allocated per frame); it is the only layer redrawn while nothing else moves.
+     */
+    private void drawAura(Canvas c) {
+        if (!luxury || w <= 0 || h <= 0) return;
+        if (auraPoolA == null || auraW != w || auraH != h) buildAura();
+        long t = SystemClock.uptimeMillis();
+        auraPaint.setStyle(Paint.Style.FILL);
+
+        float ax = w * (0.5f + 0.34f * (float) Math.sin(t * 0.00011)), ay = h * (0.30f + 0.16f * (float) Math.cos(t * 0.00017));
+        float bx = w * (0.5f + 0.40f * (float) Math.cos(t * 0.00008)), by = h * (0.80f + 0.12f * (float) Math.sin(t * 0.00013));
+        auraPaint.setShader(auraPoolA);
+        c.save();
+        c.translate(ax, ay);
+        c.drawCircle(0, 0, w * 0.55f, auraPaint);
+        c.restore();
+        auraPaint.setShader(auraPoolB);
+        c.save();
+        c.translate(bx, by);
+        c.drawCircle(0, 0, w * 0.45f, auraPaint);
+        c.restore();
+
+        // The shine: 2.6 s across the screen, every 11 s.
+        long phase = t % 11000;
+        if (phase < 2600) {
+            float p = phase / 2600f;
+            float ease = p * p * (3 - 2 * p);
+            float band = w * 0.30f, x = -band + (w + 2 * band) * ease;
+            auraPaint.setShader(auraSweep);
+            auraPaint.setAlpha(Math.round(255 * (float) Math.sin(Math.PI * p)));
+            c.save();
+            c.rotate(-18f, w / 2f, h / 2f);
+            c.translate(x, 0);
+            c.drawRect(0, -h * 0.4f, band, h * 1.4f, auraPaint);
+            c.restore();
+            auraPaint.setAlpha(255);
+        }
+
+        // Gold dust.
+        auraPaint.setShader(null);
+        for (int i = 0; i < LUX_DUST; i++) {
+            float fy = (dustY[i] - t * 0.001f * dustSpeed[i]) % 1f;
+            if (fy < 0) fy += 1f;
+            float x = dustX[i] * w + 22 * k * (float) Math.sin(t * 0.0006 + dustPhase[i]);
+            float y = fy * h;
+            float twinkle = 0.55f + 0.45f * (float) Math.sin(t * 0.0011 + dustPhase[i] * 2);
+            float a = (float) Math.sin(Math.PI * fy) * twinkle;   // fades in and out toward the edges
+            float r = dustSize[i] * k;
+            auraPaint.setColor((Math.round(46 * a) << 24) | 0xFFE7B0);
+            c.drawCircle(x, y, r * 3.4f, auraPaint);                // soft halo
+            auraPaint.setColor((Math.round(190 * a) << 24) | 0xFFE7B0);
+            c.drawCircle(x, y, r, auraPaint);
+        }
+
+        auraPaint.setShader(auraVignette);
+        c.drawRect(screen, auraPaint);
+        auraPaint.setShader(null);
+    }
+
     // MARK: - Neon look
 
     /** Pink-to-cyan glowing borders (the "For You" neon design). false brings back the plain glass look. */
     private static final boolean NEON = true;
     /** Black Barbie: always dark, with hot pink and gold. false: the pink-and-cyan neon look. */
     private static final boolean BARBIE = true;
-    private static final int NEON_PINK = BARBIE ? 0xFFFF2E93 : 0xFFFF3FA4;
-    private static final int NEON_CYAN = BARBIE ? 0xFFFFC46B : 0xFF3FD0FF;     // gold for Barbie
-    private static final int NEON_VIOLET = BARBIE ? 0xFFE0218A : 0xFFB46CFF;   // magenta for Barbie
+    // Not constants: Home Settings → Theme → Luxury swaps them for gold (applyLook).
+    private static int NEON_PINK = BARBIE ? 0xFFFF2E93 : 0xFFFF3FA4;
+    private static int NEON_CYAN = BARBIE ? 0xFFFFC46B : 0xFF3FD0FF;     // gold for Barbie
+    private static int NEON_VIOLET = BARBIE ? 0xFFE0218A : 0xFFB46CFF;   // magenta for Barbie
     private static final int[] NEON_BUTTONS = {NEON_PINK, NEON_CYAN, NEON_VIOLET};
     private static final Map<String, Integer> NEON_RING = new HashMap<>();
     static {
